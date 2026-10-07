@@ -2,9 +2,9 @@ import pygame
 import random
 import sys
 
-COLS = 8
-ROWS = 16
-CELL_SIZE = 40
+COLS = 10
+ROWS = 20
+CELL_SIZE = 32
 
 FIELD_WIDTH = COLS * CELL_SIZE
 FIELD_HEIGHT = ROWS * CELL_SIZE
@@ -31,6 +31,34 @@ GRAY = (125, 125, 125)
 GRID_COLOR = (140, 140, 140)
 BG_COLOR = (60, 60, 60)
 
+# Фигуры тетриса (координаты относительно центра)
+# Каждая фигура - список из 4 кортежей (x, y)
+SHAPES = {
+    'I': [
+        [(0, -1), (0, 0), (0, 1), (0, 2)],  # Вертикальная
+        [(-1, 0), (0, 0), (1, 0), (2, 0)]   # Горизонтальная
+    ],
+    'L': [
+        [(0, -1), (0, 0), (0, 1), (1, 1)],  # Поворот 0°
+        [(-1, 0), (0, 0), (1, 0), (-1, 1)], # Поворот 90°
+        [(-1, -1), (0, -1), (0, 0), (0, 1)],# Поворот 180°
+        [(1, -1), (-1, 0), (0, 0), (1, 0)]  # Поворот 270°
+    ],
+    'T': [
+        [(0, -1), (-1, 0), (0, 0), (1, 0)], # Поворот 0°
+        [(0, -1), (0, 0), (1, 0), (0, 1)],  # Поворот 90°
+        [(-1, 0), (0, 0), (1, 0), (0, 1)],  # Поворот 180°
+        [(0, -1), (-1, 0), (0, 0), (0, 1)]  # Поворот 270°
+    ]
+}
+
+# Цвета для каждой фигуры
+SHAPE_COLORS = {
+    'I': (46, 204, 113),   # Зеленый
+    'L': (231, 76, 60),    # Красный
+    'T': (52, 152, 219)    # Синий
+}
+
 # --- ИНИЦИАЛИЗАЦИЯ PYGAME ---
 pygame.init()
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -42,7 +70,15 @@ small_font = pygame.font.SysFont("arial", 16)
 # --- СОСТОЯНИЕ ИГРЫ ---
 # Сетка 16 строк на 8 колонок. 0 - пусто, иначе - кортеж цвета.
 grid = [[0 for _ in range(COLS)] for _ in range(ROWS)]
-current_block = {'x': 0, 'y': 0, 'color': (0, 0, 0)}
+
+current_piece = {
+    'shape': 'I',
+    'rotation': 0,
+    'x': 0,
+    'y': 0,
+    'color': (0, 0, 0)
+}
+
 
 fall_timer = 0          # Таймер падения (в миллисекундах)
 base_fall_speed = 600   # Базовая скорость (мс между падениями)
@@ -51,56 +87,92 @@ game_over = False
 score = 0
 
 
-def spawn_new_block():
-    """Создает новый одиночный квадратик в верхней части поля."""
-    global current_block, game_over
-    current_block['x'] = random.randint(0, COLS - 1)
-    current_block['y'] = 0
-    current_block['color'] = random.choice(BLOCK_COLORS)
+def spawn_new_piece():
+    """Создает новую фигуру в середине верхней части поля."""
+    global current_piece, game_over
     
-    # Проверка на Game Over (если верхняя клетка уже занята)
-    if grid[current_block['y']][current_block['x']] != 0:
+    shape_name = random.choice(list(SHAPES.keys()))
+    current_piece['shape'] = shape_name
+    current_piece['rotation'] = 0
+    current_piece['x'] = COLS // 2  # Середина поля
+    current_piece['y'] = 2  # Начинаем чуть ниже верха
+    current_piece['color'] = random.choice(BLOCK_COLORS)
+    
+    # Проверка на Game Over
+    if check_piece_collision(current_piece['x'], current_piece['y'], current_piece['rotation']):
         game_over = True
 
+def get_piece_cells(x, y, rotation):
+    """Возвращает абсолютные координаты всех клеток фигуры."""
+    shape_name = current_piece['shape']
+    relative_cells = SHAPES[shape_name][rotation]
+    return [(x + dx, y + dy) for dx, dy in relative_cells]
 
-def check_collision(x, y):
-    """Проверяет, можно ли переместить блок в координаты (x, y) СТОЛКНОВЕНИЕ."""
-    if x < 0 or x >= COLS or y >= ROWS:
-        return True
-    if y >= 0 and grid[y][x] != 0: # квадратик хотел попасть туда, где в этой клетке уже есть квадратик
-        return True
-    return False # столкновения нет
-
-
-def lock_block(): # закрепляет квадратик
-    """Закрепляет блок на сетке, проверяет и очищает заполненные линии."""
-    global score
-    x, y, color = current_block['x'], current_block['y'], current_block['color']
+def check_piece_collision(x, y, rotation):
+    """Проверяет, можно ли разместить фигуру в позиции (x, y) с поворотом rotation."""
+    cells = get_piece_cells(x, y, rotation)
     
-    if y >= 0:
-        grid[y][x] = color
-        
-    # Проверка заполненных линий
+    for cell_x, cell_y in cells:
+        # Проверка границ
+        if cell_x < 0 or cell_x >= COLS or cell_y >= ROWS:
+            return True
+        # Проверка столкновения с другими блоками
+        if cell_y >= 0 and grid[cell_y][cell_x] != 0:
+            return True
+    
+    return False
+
+
+def lock_piece():
+    """Закрепляет фигуру на сетке и очищает заполненные линии."""
+    global score
+    
+    cells = get_piece_cells(current_piece['x'], current_piece['y'], current_piece['rotation'])
+    
+    for cell_x, cell_y in cells:
+        if cell_y >= 0:
+            grid[cell_y][cell_x] = current_piece['color']
+    
+    # Проверка и очистка заполненных линий
     lines_cleared = 0
-    for r in range(ROWS - 1, -1, -1): # от 15-го ряда до )-го включительно с обратным шагом 
+    for r in range(ROWS - 1, -1, -1):
         if all(cell != 0 for cell in grid[r]):
-            # Удаляем заполненную строку
             grid.pop(r)
-            # Добавляем пустую строку сверху
             grid.insert(0, [0 for _ in range(COLS)])
             lines_cleared += 1
-            
+            # Не увеличиваем r, так как строки сдвинулись
+    
+    # Очки за линии
     if lines_cleared > 0:
         score += lines_cleared * 100
 
 
+def rotate_piece():
+    """Поворачивает фигуру по часовой стрелке."""
+    shape_name = current_piece['shape']
+    new_rotation = (current_piece['rotation'] + 1) % len(SHAPES[shape_name])
+    
+    # Проверяем, можно ли повернуть
+    if not check_piece_collision(current_piece['x'], current_piece['y'], new_rotation):
+        current_piece['rotation'] = new_rotation
+
 def draw_block(x, y, color, is_current=False):
-    """Рисует один квадратик"""
+    """Рисует один квадратик с 3D эффектом."""
     rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
     pygame.draw.rect(screen, color, rect)
-
+    
+    # Блик и тень
+    highlight = tuple(min(255, c + 40) for c in color)
+    shadow = tuple(max(0, c - 40) for c in color)
+    
+    pygame.draw.line(screen, highlight, rect.topleft, rect.topright, 3)
+    pygame.draw.line(screen, highlight, rect.topleft, rect.bottomleft, 3)
+    pygame.draw.line(screen, shadow, rect.bottomleft, rect.bottomright, 3)
+    pygame.draw.line(screen, shadow, rect.topright, rect.bottomright, 3)
+    
     if is_current:
         pygame.draw.rect(screen, WHITE, rect, 2)
+
 
 def draw_grid():
     """Рисует фоновую сетку."""
@@ -150,7 +222,6 @@ def draw_ui():
         y_offset += 25
 
 
-
 def reset_game():
     """Сбрасывает состояние игры."""
     global grid, score, game_over, current_fall_speed, base_fall_speed, fall_timer
@@ -159,16 +230,16 @@ def reset_game():
     game_over = False
     current_fall_speed = base_fall_speed
     fall_timer = 0
-    spawn_new_block()
+    spawn_new_piece()
 
 
 # --- ГЛАВНЫЙ ЦИКЛ ---
-spawn_new_block()
+spawn_new_piece()
 running = True
 
 while running:
     dt = clock.tick(FPS)
-
+    print(str(dt))
     # 1. Обработка событий
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -180,27 +251,26 @@ while running:
                 
             if not game_over:
                 if event.key == pygame.K_LEFT:
-                    if not check_collision(current_block['x'] - 1, current_block['y']):
-                        current_block['x'] -= 1
+                    if not check_piece_collision(current_piece['x'] - 1, current_piece['y'], current_piece['rotation']):
+                        current_piece['x'] -= 1
                 elif event.key == pygame.K_RIGHT:
-                    if not check_collision(current_block['x'] + 1, current_block['y']):
-                        current_block['x'] += 1
+                    if not check_piece_collision(current_piece['x'] + 1, current_piece['y'], current_piece['rotation']):
+                        current_piece['x'] += 1
                 elif event.key == pygame.K_DOWN:
-                    # Мгновенное падение на 1 клетку при нажатии
-                    if not check_collision(current_block['x'], current_block['y'] + 1):
-                        current_block['y'] += 1
-                        fall_timer = 0  # Сброс таймера
-                            
-                # Изменение базовой скорости (Таймер)
-                elif event.key in (pygame.K_EQUALS, pygame.K_PLUS): # Клавиши '+' и '='
-                    current_fall_speed = max(50, current_fall_speed - 50)
+                    if not check_piece_collision(current_piece['x'], current_piece['y'] + 1, current_piece['rotation']):
+                        current_piece['y'] += 1
+                        fall_timer = 0
+                elif event.key == pygame.K_UP:
+                        rotate_piece()
+                elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
+                        current_fall_speed = max(50, current_fall_speed - 50)
                 elif event.key == pygame.K_MINUS:
-                    current_fall_speed = min(1500, current_fall_speed + 50)
+                        current_fall_speed = min(1500, current_fall_speed + 50)
+
 
     # 2. Обновление логики (если не пауза и не game over)
     if not game_over:
         fall_timer += dt
-        
         # Проверка удержания клавиши "Вниз" для плавного ускорения
         keys = pygame.key.get_pressed()
         effective_speed = current_fall_speed
@@ -209,13 +279,11 @@ while running:
 
         if fall_timer >= effective_speed:
             fall_timer = 0
-            # Пытаемся сдвинуть блок вниз
-            if not check_collision(current_block['x'], current_block['y'] + 1):
-                current_block['y'] += 1
+            if not check_piece_collision(current_piece['x'], current_piece['y'] + 1, current_piece['rotation']):
+                current_piece['y'] += 1
             else:
-            # Если не можем - закрепляем и создаем новый
-                lock_block()
-                spawn_new_block()
+                lock_piece()
+                spawn_new_piece()
 
     # 3. Отрисовка
     screen.fill(BG_COLOR)
@@ -229,9 +297,13 @@ while running:
             if grid[y][x] != 0:
                 draw_block(x, y, grid[y][x])
                 
-    # Рисуем текущий падающий блок
+    # Рисуем текущую фигуру
     if not game_over:
-        draw_block(current_block['x'], current_block['y'], current_block['color'], is_current=True)
+        cells = get_piece_cells(current_piece['x'], current_piece['y'], current_piece['rotation'])
+        for cell_x, cell_y in cells:
+            if cell_y >= 0:  # Рисуем только видимые части
+                draw_block(cell_x, cell_y, current_piece['color'], is_current=True)
+
         
     # Разделитель и UI
     pygame.draw.line(screen, GRAY, (FIELD_WIDTH, 0), (FIELD_WIDTH, SCREEN_HEIGHT), 2)
